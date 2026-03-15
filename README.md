@@ -7,6 +7,22 @@ External API that provides small content for LED displays — specifically for *
 The API delivers context-aware content (text, numbers, short symbols, mini bitmaps) for small pixel surfaces in OneDigit watchfaces.  
 The API is "intelligent" — it creates sized candidates, suggests scrolling, and prioritises content. The device makes the final rendering decision.
 
+### Content flow
+
+```
+External service (Nightscout, HA, …)
+        │
+        │  POST /v1/content/push   ← push text/bitmap/color
+        ▼
+   [ ulanziAPI ]   ← caches content per deviceId + TTL
+        │
+        │  POST /v1/watchface/content   ← device polls
+        ▼
+   Display device (Ulanzi clock)
+```
+
+An **external service** (Nightscout bridge, Home Assistant, custom script, …) pushes content once it becomes available. The **device** polls the API regularly and always gets either the most recent pushed content or auto-generated fallback content.
+
 ---
 
 ## Tech Stack
@@ -15,7 +31,7 @@ The API is "intelligent" — it creates sized candidates, suggests scrolling, an
 |---|---|
 | Node.js 20+ | Runtime |
 | TypeScript | Type safety |
-| Fastify 4 | HTTP framework |
+| Fastify 5 | HTTP framework |
 | Zod | Schema validation |
 | Vitest | Testing |
 | pino | Structured logging |
@@ -88,7 +104,81 @@ Response:
 
 ---
 
-### Get watchface content (normal bg)
+### Push content from an external service
+
+An external service (Nightscout, Home Assistant, etc.) pushes content for a specific device. Content is cached for `ttlSec` seconds.
+
+```bash
+curl -X POST http://localhost:3000/v1/content/push \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceId": "clock-123",
+    "ttlSec": 60,
+    "priority": "normal",
+    "candidates": [
+      {
+        "id": "full_text",
+        "type": "text",
+        "text": "124→",
+        "color": "#00FF00"
+      },
+      {
+        "id": "short_text",
+        "type": "text",
+        "text": "124",
+        "color": "#00FF00",
+        "estimatedWidthPx": 13
+      }
+    ],
+    "fallback": {
+      "type": "text",
+      "text": "--"
+    }
+  }'
+```
+
+Response (`201 Created`):
+```json
+{
+  "stored": true,
+  "deviceId": "clock-123",
+  "expiresAt": "2026-03-15T10:31:00.000Z"
+}
+```
+
+#### With bitmap + tint color
+
+```bash
+curl -X POST http://localhost:3000/v1/content/push \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceId": "clock-123",
+    "ttlSec": 30,
+    "priority": "high",
+    "candidates": [
+      {
+        "id": "alert_icon",
+        "type": "bitmap",
+        "widthPx": 8,
+        "heightPx": 6,
+        "frames": ["3C4242423C00"],
+        "color": "#FF0000"
+      },
+      {
+        "id": "alert_text",
+        "type": "text",
+        "text": "LOW",
+        "color": "#FF0000"
+      }
+    ]
+  }'
+```
+
+---
+
+### Device polls for content
+
+The display device sends its capabilities. If pushed content is available for `deviceId`, the API returns it. Otherwise it auto-generates from `context`.
 
 ```bash
 curl -X POST http://localhost:3000/v1/watchface/content \
@@ -117,7 +207,7 @@ curl -X POST http://localhost:3000/v1/watchface/content \
   }'
 ```
 
-### Get watchface content with debug info
+### Device poll with debug info
 
 ```bash
 curl -X POST "http://localhost:3000/v1/watchface/content?debug=true" \
@@ -135,18 +225,48 @@ curl -X POST "http://localhost:3000/v1/watchface/content?debug=true" \
   }'
 ```
 
-The `?debug=true` query parameter adds a `debug` block to the response showing `availableWidthPx`, `availableHeightPx`, and calculation notes.
+The `?debug=true` query parameter adds a `debug` block to the response showing `availableWidthPx`, `availableHeightPx`, and notes (e.g. `"served from pushed content cache"`).
 
 ---
 
 ## Available Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/health` | Health check |
-| POST | `/v1/watchface/content` | Get display content |
-| GET | `/docs` | Swagger UI |
-| GET | `/docs/json` | OpenAPI JSON spec |
+| Method | Path | Caller | Description |
+|---|---|---|---|
+| GET | `/health` | Any | Health check |
+| POST | `/v1/content/push` | **External service** | Push text/bitmap/color for a device |
+| POST | `/v1/watchface/content` | **Display device** | Poll for content to render |
+| GET | `/docs` | Any | Swagger UI |
+| GET | `/docs/json` | Any | OpenAPI JSON spec |
+
+---
+
+## Color Support
+
+Colors are specified as **6-digit hex strings** in `#RRGGBB` format.
+
+| Example | Meaning |
+|---|---|
+| `#FF0000` | Red (alert) |
+| `#00FF00` | Green (in-range) |
+| `#FFFF00` | Yellow (warning) |
+| `#FFFFFF` | White (default) |
+
+Colors can be set on:
+- **Text candidates** — foreground text color
+- **Bitmap candidates** — tint color applied to the 1-bit bitmap mask
+- **Fallback** — fallback text color
+
+The `color` field is always **optional**. If omitted, the device applies its default color.
+
+```jsonc
+// Text with color
+{ "id": "bg", "type": "text", "text": "124→", "color": "#00FF00" }
+
+// Bitmap with tint color
+{ "id": "icon", "type": "bitmap", "widthPx": 8, "heightPx": 6,
+  "frames": ["3C4242423C00"], "color": "#FF0000" }
+```
 
 ---
 
@@ -207,6 +327,13 @@ The `?debug=true` query parameter adds a `debug` block to the response showing `
 
 ## Core Logic
 
+### Content priority
+
+When a device polls `POST /v1/watchface/content`:
+
+1. **Pushed content available?** → Return cached content from the external service (with renderPlan computed for the device's display)
+2. **No pushed content / expired?** → Auto-generate from `context` (bgValue, trend)
+
 ### Available display area
 
 ```
@@ -223,7 +350,7 @@ The API uses the passed `display` block — it does **not** rely on hardcoded va
 | `onedigit` | 5 | 27 px |
 | `onedigit_dual` | 10 | 22 px |
 
-### Candidates order
+### Candidate order (auto-generated)
 
 1. **Full text** — e.g. `124→`
 2. **Short text** — e.g. `124`
@@ -241,8 +368,12 @@ The API uses the passed `display` block — it does **not** rely on hardcoded va
 
 ### Scroll recommendation
 
-Scroll is **recommended** (`renderPlan.scroll.enabled: true`) when the best candidate's estimated width exceeds `availableWidthPx` **and** `clientCapabilities.canScroll` is `true`.  
+Scroll is **recommended** (`renderPlan.scroll.enabled: true`) when the widest text candidate's estimated width exceeds `availableWidthPx` **and** `clientCapabilities.canScroll` is `true`.  
 The device makes the final decision.
+
+### TTL / `validForSec`
+
+For pushed content, `validForSec` in the response reflects the **remaining cache TTL** — telling the device how long it can use this response before polling again.
 
 ---
 
@@ -250,8 +381,9 @@ The device makes the final decision.
 
 | Area | Current | Next step |
 |---|---|---|
+| Content cache | In-memory, single process | Replace with Redis for multi-instance / persistence |
 | Rate limiting | In-memory per deviceId/IP | Replace with Redis for multi-instance |
-| Auth | Optional API key (ENV only, not enforced) | JWT or API key enforcement |
+| Auth | Optional API key (ENV only, not enforced) | JWT or API key enforcement on push endpoint |
 | Content types | BG value + trend | Add basal rate, IOB, COB views |
 | Bitmap frames | Static placeholder | Real bitmap generator |
 | Database | None | Store device preferences |

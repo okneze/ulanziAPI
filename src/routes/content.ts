@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { ZodError } from 'zod';
 import { ContentRequestSchema } from '../schemas/request.js';
 import { ContentResponseSchema } from '../schemas/response.js';
-import { planContent } from '../services/contentPlanner.js';
+import { planContent, planFromStored } from '../services/contentPlanner.js';
+import { contentStore } from '../services/contentStore.js';
 import { RateLimiter } from '../utils/rateLimiter.js';
 import { config } from '../config/index.js';
 
@@ -90,7 +91,12 @@ export async function contentRoute(fastify: FastifyInstance): Promise<void> {
       }
 
       const includeDebug = request.query.debug === true;
-      const responseData = planContent(parseResult.data, includeDebug);
+
+      // Check for pushed content from an external service
+      const stored = contentStore.get(parseResult.data.deviceId);
+      const responseData = stored
+        ? planFromStored(parseResult.data, stored, includeDebug)
+        : planContent(parseResult.data, includeDebug);
 
       // Validate the response matches the schema (dev safeguard)
       if (config.nodeEnv !== 'production') {

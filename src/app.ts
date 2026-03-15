@@ -5,6 +5,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { config } from './config/index.js';
 import { healthRoute } from './routes/health.js';
 import { contentRoute } from './routes/content.js';
+import { pushRoute } from './routes/push.js';
 
 export async function buildApp() {
   const fastify = Fastify({
@@ -62,6 +63,7 @@ export async function buildApp() {
   // Routes
   await fastify.register(healthRoute);
   await fastify.register(contentRoute);
+  await fastify.register(pushRoute);
 
   return fastify;
 }

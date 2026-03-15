@@ -9,6 +9,7 @@ import type {
   RenderPlan,
   TextCandidate,
 } from '../schemas/response.js';
+import type { StoredEntry } from './contentStore.js';
 import { estimateTextWidth } from '../utils/widthEstimator.js';
 
 // ---------------------------------------------------------------------------
@@ -172,6 +173,85 @@ export function planContent(
     renderPlan,
     candidates,
     fallback: { type: 'text', text: '--' },
+    debug: debugInfo,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Plan content from a cached StoredEntry (pushed by an external service)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adapts cached content pushed by an external service to the device's display
+ * dimensions, filling in any missing estimatedWidthPx values and computing a
+ * fresh renderPlan.
+ */
+export function planFromStored(
+  req: ContentRequest,
+  stored: StoredEntry,
+  includeDebug: boolean
+): ContentResponse {
+  const { display, clientCapabilities } = req;
+
+  const availableWidthPx = display.widthPx - display.reservedLeftPx;
+  const availableHeightPx = display.heightPx - display.reservedBottomPx;
+  const canScroll = clientCapabilities?.canScroll ?? false;
+
+  // Convert push candidates → response candidates, filling in estimatedWidthPx
+  const candidates: Candidate[] = stored.candidates.map((c) => {
+    if (c.type === 'text') {
+      const textCandidate: TextCandidate = {
+        id: c.id,
+        type: 'text',
+        text: c.text,
+        estimatedWidthPx: c.estimatedWidthPx ?? estimateTextWidth(c.text),
+        ...(c.color !== undefined ? { color: c.color } : {}),
+      };
+      return textCandidate;
+    }
+    const bitmapCandidate: BitmapCandidate = {
+      id: c.id,
+      type: 'bitmap',
+      widthPx: c.widthPx,
+      heightPx: c.heightPx,
+      frames: c.frames,
+      ...(c.color !== undefined ? { color: c.color } : {}),
+    };
+    return bitmapCandidate;
+  });
+
+  // Scroll is needed when the widest text candidate exceeds available width
+  const textWidths = candidates
+    .filter((c): c is TextCandidate => c.type === 'text')
+    .map((c) => c.estimatedWidthPx);
+  const scrollNeeded =
+    textWidths.length > 0 && textWidths.some((w) => w > availableWidthPx);
+
+  const renderPlan = buildRenderPlan(scrollNeeded, canScroll, availableWidthPx);
+
+  // Remaining TTL (seconds) so the device knows how long to cache the response
+  const remainingTtlSec = Math.max(
+    0,
+    Math.floor((stored.expiresAt - Date.now()) / 1000)
+  );
+
+  const debugInfo =
+    includeDebug || config.debugEnabled
+      ? {
+          availableWidthPx,
+          availableHeightPx,
+          notes: ['served from pushed content cache'],
+        }
+      : undefined;
+
+  return {
+    schemaVersion: 1,
+    contentId: uuidv4(),
+    validForSec: remainingTtlSec,
+    priority: stored.priority,
+    renderPlan,
+    candidates,
+    fallback: stored.fallback,
     debug: debugInfo,
   };
 }

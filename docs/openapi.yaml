@@ -4,6 +4,24 @@ info:
   description: >
     External API that provides content for LED displays.
     Supports Nightscout-Clock OneDigit and OneDigit Dual Views.
+
+    ## Architecture
+
+    Content flows in two directions:
+
+    1. **External service → API** (`POST /v1/content/push`): A service (e.g. Nightscout
+       bridge, Home Assistant) pushes text/graphics with optional colors for a specific
+       device. The API caches it with a TTL.
+
+    2. **Device → API** (`POST /v1/watchface/content`): The display device polls for
+       content. The API returns the cached content if available, or auto-generates it
+       from the `context` field as a fallback.
+
+    ## Color format
+
+    Colors are specified as 6-digit hex strings: `#RRGGBB`.
+    Examples: `#FF0000` (red), `#00FF00` (green), `#FFFFFF` (white).
+    The device uses this color to render the text or tint the bitmap on the LED matrix.
   version: "1.0.0"
 
 servers:
@@ -29,10 +47,68 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
 
+  /v1/content/push:
+    post:
+      tags: [content]
+      summary: Push content for a device (called by an external service)
+      description: >
+        An external service (e.g. Nightscout, Home Assistant) pushes content for a
+        specific device. The content is stored in-memory for `ttlSec` seconds.
+        When the device next polls `POST /v1/watchface/content`, it receives this
+        cached content instead of auto-generated output.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushContentRequest"
+            example:
+              deviceId: clock-123
+              ttlSec: 60
+              priority: normal
+              candidates:
+                - id: full_text
+                  type: text
+                  text: "124→"
+                  color: "#00FF00"
+                - id: short_text
+                  type: text
+                  text: "124"
+                  color: "#00FF00"
+                  estimatedWidthPx: 13
+              fallback:
+                type: text
+                text: "--"
+      responses:
+        "201":
+          description: Content stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushContentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /v1/watchface/content:
     post:
       tags: [content]
-      summary: Get display content for a watchface view
+      summary: Get display content for a watchface view (called by the device)
+      description: >
+        The display device sends its capabilities and context, and receives a list
+        of rendering candidates. If an external service has previously pushed content
+        for this deviceId via `POST /v1/content/push`, that content is returned
+        (with the renderPlan adapted to the device's display dimensions). Otherwise,
+        content is auto-generated from the `context` field.
       parameters:
         - name: debug
           in: query
@@ -105,6 +181,12 @@ components:
         version:
           type: string
           example: "1.0.0"
+
+    HexColor:
+      type: string
+      pattern: "^#[0-9A-Fa-f]{6}$"
+      description: 6-digit hex color in #RRGGBB format
+      example: "#FF8800"
 
     DisplayConfig:
       type: object
@@ -190,6 +272,99 @@ components:
         debug:
           type: boolean
 
+    PushTextCandidate:
+      type: object
+      required: [id, type, text]
+      properties:
+        id:
+          type: string
+          example: full_text
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+          example: "124→"
+        color:
+          $ref: "#/components/schemas/HexColor"
+        estimatedWidthPx:
+          type: integer
+          description: Auto-calculated from text length if omitted
+          example: 20
+
+    PushBitmapCandidate:
+      type: object
+      required: [id, type, widthPx, heightPx, frames]
+      properties:
+        id:
+          type: string
+          example: icon
+        type:
+          type: string
+          enum: [bitmap]
+        widthPx:
+          type: integer
+          example: 8
+        heightPx:
+          type: integer
+          example: 6
+        frames:
+          type: array
+          items:
+            type: string
+          example: ["3C4242423C00"]
+        color:
+          $ref: "#/components/schemas/HexColor"
+
+    PushContentRequest:
+      type: object
+      required: [deviceId, candidates]
+      properties:
+        deviceId:
+          type: string
+          example: clock-123
+        ttlSec:
+          type: integer
+          default: 60
+          maximum: 3600
+          description: Time-to-live in seconds. Content is discarded after this period.
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+          default: normal
+        candidates:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/PushTextCandidate"
+              - $ref: "#/components/schemas/PushBitmapCandidate"
+        fallback:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [text]
+            text:
+              type: string
+            color:
+              $ref: "#/components/schemas/HexColor"
+
+    PushContentResponse:
+      type: object
+      properties:
+        stored:
+          type: boolean
+          example: true
+        deviceId:
+          type: string
+          example: clock-123
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the cached content will expire
+
     ScrollConfig:
       type: object
       properties:
@@ -224,6 +399,8 @@ components:
           enum: [text]
         text:
           type: string
+        color:
+          $ref: "#/components/schemas/HexColor"
         estimatedWidthPx:
           type: number
 
@@ -243,6 +420,8 @@ components:
           type: array
           items:
             type: string
+        color:
+          $ref: "#/components/schemas/HexColor"
 
     DebugInfo:
       type: object
@@ -269,6 +448,7 @@ components:
           format: uuid
         validForSec:
           type: number
+          description: Remaining TTL in seconds (reflects cache expiry for pushed content)
           example: 60
         priority:
           type: string
@@ -289,6 +469,8 @@ components:
               enum: [text]
             text:
               type: string
+            color:
+              $ref: "#/components/schemas/HexColor"
         debug:
           $ref: "#/components/schemas/DebugInfo"
 
@@ -305,3 +487,4 @@ components:
           type: array
           items:
             type: object
+

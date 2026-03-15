@@ -19,6 +19,8 @@ export const TextCandidateSchema = z.object({
   id: z.string(),
   type: z.literal('text'),
   text: z.string(),
+  /** Foreground color in #RRGGBB format */
+  color: z.string().optional(),
   estimatedWidthPx: z.number(),
 });
 
@@ -28,6 +30,8 @@ export const BitmapCandidateSchema = z.object({
   widthPx: z.number(),
   heightPx: z.number(),
   frames: z.array(z.string()),
+  /** Optional tint color in #RRGGBB format */
+  color: z.string().optional(),
 });
 
 export const CandidateSchema = z.discriminatedUnion('type', [
@@ -38,6 +42,8 @@ export const CandidateSchema = z.discriminatedUnion('type', [
 export const FallbackSchema = z.object({
   type: z.literal('text'),
   text: z.string(),
+  /** Optional fallback text color in #RRGGBB format */
+  color: z.string().optional(),
 });
 
 export const DebugInfoSchema = z
