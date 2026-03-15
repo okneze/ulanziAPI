@@ -10,7 +10,6 @@ coverage
 test
 *.test.ts
 vitest.config.ts
-tsconfig.json
 .git
 .gitignore
 README.md
