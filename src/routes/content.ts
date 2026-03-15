@@ -98,6 +98,25 @@ export async function contentRoute(fastify: FastifyInstance): Promise<void> {
         ? planFromStored(parseResult.data, stored, includeDebug)
         : planContent(parseResult.data, includeDebug);
 
+      const { deviceId } = parseResult.data;
+      request.log.info(
+        {
+          event: 'content_poll',
+          deviceId,
+          source: stored ? 'cache' : 'generated',
+          contentId: responseData.contentId,
+          priority: responseData.priority,
+          validForSec: responseData.validForSec,
+          candidateCount: responseData.candidates.length,
+          candidates: responseData.candidates.map((c) =>
+            c.type === 'text'
+              ? { id: c.id, type: 'text', text: c.text, estimatedWidthPx: c.estimatedWidthPx, color: c.color }
+              : { id: c.id, type: 'bitmap', widthPx: c.widthPx, heightPx: c.heightPx, color: c.color }
+          ),
+        },
+        `poll deviceId=${deviceId} source=${stored ? 'cache' : 'generated'} candidates=${responseData.candidates.length}`
+      );
+
       // Validate the response matches the schema (dev safeguard)
       if (config.nodeEnv !== 'production') {
         ContentResponseSchema.parse(responseData);

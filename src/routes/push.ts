@@ -81,6 +81,24 @@ export async function pushRoute(fastify: FastifyInstance): Promise<void> {
 
       const expiresAt = contentStore.set(parseResult.data);
 
+      const { deviceId, ttlSec, priority, candidates } = parseResult.data;
+      request.log.info(
+        {
+          event: 'content_push',
+          deviceId,
+          ttlSec,
+          priority: priority ?? 'normal',
+          candidateCount: candidates.length,
+          candidates: candidates.map((c) =>
+            c.type === 'text'
+              ? { id: c.id, type: 'text', text: c.text ?? '[segments]', color: c.color }
+              : { id: c.id, type: 'bitmap', widthPx: c.widthPx, heightPx: c.heightPx, frames: c.frames.length }
+          ),
+          expiresAt: expiresAt.toISOString(),
+        },
+        `push deviceId=${deviceId} candidates=${candidates.length} ttl=${ttlSec}s`
+      );
+
       return reply.status(201).send({
         stored: true,
         deviceId: parseResult.data.deviceId,
