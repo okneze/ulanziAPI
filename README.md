@@ -106,7 +106,7 @@ Response:
 
 ### Push content from an external service
 
-An external service (Nightscout, Home Assistant, etc.) pushes content for a specific device. Content is cached for `ttlSec` seconds.
+An external service (Nightscout, Home Assistant, etc.) pushes content for a specific device. Content is cached for `ttlSec` seconds (default `60`, max `3600`). Up to **10 candidates** can be provided per push; order them from richest to most compact so the device can pick the best fit.
 
 ```bash
 curl -X POST http://localhost:3000/v1/content/push \
@@ -137,6 +137,8 @@ curl -X POST http://localhost:3000/v1/content/push \
   }'
 ```
 
+> **Note:** `fallback` is optional. When omitted the API defaults to `{ "type": "text", "text": "--" }`.
+
 Response (`201 Created`):
 ```json
 {
@@ -145,6 +147,38 @@ Response (`201 Created`):
   "expiresAt": "2026-03-15T10:31:00.000Z"
 }
 ```
+
+#### Push request field reference
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `deviceId` | string | ✅ | Max 128 chars. Identifies the target device. |
+| `ttlSec` | integer | — | Default `60`, max `3600`. Content is discarded after this period. |
+| `priority` | string | — | `low` / `normal` / `high` / `critical`. Default `normal`. |
+| `candidates` | array | ✅ | Min 1, max 10. Text and/or bitmap entries, richest first. |
+| `fallback` | object | — | Shown if no candidate fits. Defaults to `{ "type": "text", "text": "--" }`. |
+
+**Text candidate fields:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | string | ✅ | Max 64 chars. Unique per push payload. |
+| `type` | `"text"` | ✅ | |
+| `text` | string | ✅* | Max 256 chars. *Required unless `segments` is provided. |
+| `segments` | array | ✅* | Max 64 entries. *Required unless `text` is provided. Per-span colors (see [Color Support](#color-support)). |
+| `color` | string | — | `#RRGGBB`. Default foreground color for the whole candidate. |
+| `estimatedWidthPx` | integer | — | Auto-calculated from `text` length if omitted. |
+
+**Bitmap candidate fields:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | string | ✅ | Max 64 chars. |
+| `type` | `"bitmap"` | ✅ | |
+| `widthPx` | integer | ✅ | Max 64. |
+| `heightPx` | integer | ✅ | Max 32. |
+| `frames` | array | ✅ | Min 1, max 16. Each frame is a hex-encoded 1-bit bitmap string. |
+| `color` | string | — | `#RRGGBB`. Tint color applied to the bitmap. |
 
 #### With bitmap + tint color
 
@@ -234,6 +268,111 @@ curl -X POST http://localhost:3000/v1/watchface/content \
     }
   }'
 ```
+
+#### Content request field reference
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `deviceId` | string | ✅ | Max 128 chars. Must match the `deviceId` used in the push call. |
+| `view` | string | ✅ | `onedigit` or `onedigit_dual`. |
+| `display` | object | ✅ | `widthPx`, `heightPx`, `reservedLeftPx`, `reservedBottomPx`. |
+| `context` | object | — | `bgValue` (number), `trend`, `basalRate`, `iob`, `cob`. Used for auto-generated content. |
+| `clientCapabilities` | object | — | `canScroll`, `canAnimate`, `supportsBitmap`, `maxFps`. |
+| `locale` | string | — | BCP 47 locale, e.g. `de-DE`. |
+| `time` | string | — | ISO-8601 timestamp with timezone offset. |
+
+#### Auto-generated content response (no push cache)
+
+When no pushed content is cached for the device, the API auto-generates from `context`:
+
+```json
+{
+  "schemaVersion": 1,
+  "contentId": "a1b2c3d4-...",
+  "validForSec": 60,
+  "priority": "low",
+  "renderPlan": {
+    "strategy": "best_fit_then_scroll",
+    "scroll": {
+      "enabled": false,
+      "speedPxPerSec": 8,
+      "pauseMs": 600,
+      "loop": 1
+    },
+    "align": "left"
+  },
+  "candidates": [
+    { "id": "full_text",  "type": "text", "text": "124→", "estimatedWidthPx": 25 },
+    { "id": "short_text", "type": "text", "text": "124",  "estimatedWidthPx": 15 },
+    { "id": "icon", "type": "bitmap", "widthPx": 8, "heightPx": 6, "frames": ["3C4242423C00"] }
+  ],
+  "fallback": { "type": "text", "text": "--" }
+}
+```
+
+#### Pushed-content response
+
+When pushed content is available, the same shape is returned but `validForSec` reflects the **remaining cache TTL** and the candidates come from the push payload. Colors and segments are forwarded unchanged:
+
+```json
+{
+  "schemaVersion": 1,
+  "contentId": "e5f6a7b8-...",
+  "validForSec": 58,
+  "priority": "normal",
+  "renderPlan": {
+    "strategy": "best_fit_then_scroll",
+    "scroll": { "enabled": false, "speedPxPerSec": 8, "pauseMs": 600, "loop": 1 },
+    "align": "left"
+  },
+  "candidates": [
+    {
+      "id": "full_text",
+      "type": "text",
+      "text": "124→",
+      "color": "#00FF00",
+      "estimatedWidthPx": 25
+    }
+  ],
+  "fallback": { "type": "text", "text": "--" }
+}
+```
+
+#### Response field reference
+
+| Field | Type | Notes |
+|---|---|---|
+| `schemaVersion` | `1` | Always `1`. Used by the device to detect breaking changes. |
+| `contentId` | string | UUID. A unique ID for this specific response. |
+| `validForSec` | integer | How long the device should cache this response before polling again. For pushed content this is the remaining TTL; for auto-generated content it is `60`. |
+| `priority` | string | `low` / `normal` / `high` / `critical`. |
+| `renderPlan` | object | Rendering hints — `strategy`, `scroll` config, and `align`. |
+| `renderPlan.scroll.enabled` | boolean | `true` when the widest text candidate exceeds `availableWidthPx` and `canScroll` is `true`. |
+| `candidates` | array | Ordered list of display options. Pick the widest one that fits. |
+| `fallback` | object | Always present. `{ "type": "text", "text": "...", "color"? }`. |
+| `debug` | object | Only present when `?debug=true` or `DEBUG_ENABLED=true`. |
+
+**Text candidate fields in response:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | Matches the `id` from the push payload (or `full_text` / `short_text` for auto-generated). |
+| `type` | `"text"` | |
+| `text` | string | Plain text string (joined from segments if segments-only push). |
+| `estimatedWidthPx` | number | Estimated render width in pixels. |
+| `color` | string | `#RRGGBB`. Present only when provided in the push payload. |
+| `segments` | array | Present only when the push payload contained per-segment colors. Each entry: `{ "text": "...", "color"?: "#RRGGBB" }`. |
+
+**Bitmap candidate fields in response:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | |
+| `type` | `"bitmap"` | |
+| `widthPx` | number | Width in pixels. |
+| `heightPx` | number | Height in pixels. |
+| `frames` | array | Hex-encoded 1-bit bitmap frames. |
+| `color` | string | `#RRGGBB`. Tint color. Present only when provided in push. |
 
 ### Device poll with debug info
 
