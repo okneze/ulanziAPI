@@ -200,12 +200,16 @@ export function planFromStored(
   // Convert push candidates → response candidates, filling in estimatedWidthPx
   const candidates: Candidate[] = stored.candidates.map((c) => {
     if (c.type === 'text') {
+      // Derive plain text: use explicit text, or join from segments
+      const plainText =
+        c.text ?? (c.segments?.map((s) => s.text).join('') ?? '');
       const textCandidate: TextCandidate = {
         id: c.id,
         type: 'text',
-        text: c.text,
-        estimatedWidthPx: c.estimatedWidthPx ?? estimateTextWidth(c.text),
+        text: plainText,
+        estimatedWidthPx: c.estimatedWidthPx ?? estimateTextWidth(plainText),
         ...(c.color !== undefined ? { color: c.color } : {}),
+        ...(c.segments !== undefined ? { segments: c.segments } : {}),
       };
       return textCandidate;
     }

@@ -376,4 +376,198 @@ describe('POST /v1/content/push', () => {
     expect(body.debug).toBeDefined();
     expect(body.debug.notes).toContain('served from pushed content cache');
   });
+
+  // -------------------------------------------------------------------------
+  // Colored text segments
+  // -------------------------------------------------------------------------
+
+  it('segments are passed through to the device response', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'seg_text',
+            type: 'text',
+            segments: [
+              { text: 'A', color: '#FF0000' },
+              { text: 'B', color: '#0000FF' },
+              { text: 'C', color: '#00FF00' },
+            ],
+          },
+        ],
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    const candidate = body.candidates.find(
+      (c: { id: string }) => c.id === 'seg_text'
+    );
+    expect(candidate).toBeDefined();
+    expect(Array.isArray(candidate.segments)).toBe(true);
+    expect(candidate.segments).toHaveLength(3);
+    expect(candidate.segments[0]).toEqual({ text: 'A', color: '#FF0000' });
+    expect(candidate.segments[1]).toEqual({ text: 'B', color: '#0000FF' });
+    expect(candidate.segments[2]).toEqual({ text: 'C', color: '#00FF00' });
+  });
+
+  it('plain text is auto-joined from segments when text field is omitted', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'seg_only',
+            type: 'text',
+            segments: [
+              { text: 'Hello', color: '#FF0000' },
+              { text: ' ', color: '#FFFFFF' },
+              { text: 'LED', color: '#0000FF' },
+            ],
+          },
+        ],
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    const body = response.json();
+    const candidate = body.candidates.find(
+      (c: { id: string }) => c.id === 'seg_only'
+    );
+    expect(candidate).toBeDefined();
+    // Auto-joined text
+    expect(candidate.text).toBe('Hello LED');
+    // Width should be estimated from joined text
+    expect(typeof candidate.estimatedWidthPx).toBe('number');
+    expect(candidate.estimatedWidthPx).toBeGreaterThan(0);
+  });
+
+  it('explicit text field takes precedence over segment join for display text', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'both',
+            type: 'text',
+            text: 'EXPLICIT',
+            segments: [
+              { text: 'seg1', color: '#FF0000' },
+              { text: 'seg2', color: '#0000FF' },
+            ],
+          },
+        ],
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    const body = response.json();
+    const candidate = body.candidates.find(
+      (c: { id: string }) => c.id === 'both'
+    );
+    expect(candidate.text).toBe('EXPLICIT');
+    // Segments still forwarded
+    expect(candidate.segments).toHaveLength(2);
+  });
+
+  it('segments without color inherit from candidate color', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'inherit_color',
+            type: 'text',
+            text: 'Hi',
+            color: '#FF8800',
+            segments: [
+              { text: 'H' },          // no per-segment color → inherits #FF8800
+              { text: 'i', color: '#FFFFFF' },
+            ],
+          },
+        ],
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    const body = response.json();
+    const candidate = body.candidates.find(
+      (c: { id: string }) => c.id === 'inherit_color'
+    );
+    expect(candidate.color).toBe('#FF8800'); // candidate-level color present
+    expect(candidate.segments[0].color).toBeUndefined();  // no override → device inherits
+    expect(candidate.segments[1].color).toBe('#FFFFFF');
+  });
+
+  it('returns 400 when neither text nor segments are provided', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'empty',
+            type: 'text',
+            // neither text nor segments
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json();
+    expect(body.error).toBe('Validation Error');
+  });
+
+  it('returns 400 for invalid hex color in a segment', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: {
+        ...PUSH_BASE,
+        candidates: [
+          {
+            id: 'bad_seg_color',
+            type: 'text',
+            segments: [
+              { text: 'A', color: 'red' }, // invalid
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
 });

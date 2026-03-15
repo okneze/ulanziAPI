@@ -9,16 +9,43 @@ export const HexColorSchema = z
   .string()
   .regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a 6-digit hex color like #FF0000 or #00ff80');
 
-export const PushTextCandidateSchema = z.object({
-  id: z.string().min(1).max(64),
-  type: z.literal('text'),
-  /** Text to display */
+/**
+ * A single colored text run within a multi-color text candidate.
+ * Example: { text: "A", color: "#FF0000" } renders "A" in red.
+ */
+export const TextSegmentSchema = z.object({
+  /** Text content of this segment */
   text: z.string().min(1).max(256),
-  /** Foreground color in #RRGGBB format */
+  /** Foreground color for this segment in #RRGGBB format. Inherits the candidate color when omitted. */
   color: HexColorSchema.optional(),
-  /** Estimated render width in pixels — auto-calculated from text length if omitted */
-  estimatedWidthPx: z.number().int().positive().optional(),
 });
+
+export const PushTextCandidateSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    type: z.literal('text'),
+    /**
+     * Plain text to display. Required unless `segments` is provided, in which case
+     * it is auto-joined from the segment texts.
+     */
+    text: z.string().min(1).max(256).optional(),
+    /**
+     * Ordered list of colored text segments for multi-color text rendering.
+     * When provided, each segment is rendered in its own color.
+     * If `text` is omitted, it is derived by concatenating all segment texts.
+     */
+    segments: z.array(TextSegmentSchema).min(1).max(64).optional(),
+    /** Default foreground color for the whole candidate in #RRGGBB format */
+    color: HexColorSchema.optional(),
+    /** Estimated render width in pixels — auto-calculated from text length if omitted */
+    estimatedWidthPx: z.number().int().positive().optional(),
+  })
+  .refine(
+    (v) =>
+      v.text !== undefined ||
+      (v.segments !== undefined && v.segments.length > 0),
+    { message: 'Either "text" or "segments" (with at least one entry) must be provided' }
+  );
 
 export const PushBitmapCandidateSchema = z.object({
   id: z.string().min(1).max(64),
@@ -31,7 +58,7 @@ export const PushBitmapCandidateSchema = z.object({
   color: HexColorSchema.optional(),
 });
 
-export const PushCandidateSchema = z.discriminatedUnion('type', [
+export const PushCandidateSchema = z.union([
   PushTextCandidateSchema,
   PushBitmapCandidateSchema,
 ]);
@@ -71,3 +98,4 @@ export type PushContentResponse = z.infer<typeof PushContentResponseSchema>;
 export type PushTextCandidate = z.infer<typeof PushTextCandidateSchema>;
 export type PushBitmapCandidate = z.infer<typeof PushBitmapCandidateSchema>;
 export type PushCandidate = z.infer<typeof PushCandidateSchema>;
+export type TextSegment = z.infer<typeof TextSegmentSchema>;

@@ -18,10 +18,19 @@ export const RenderPlanSchema = z.object({
 export const TextCandidateSchema = z.object({
   id: z.string(),
   type: z.literal('text'),
+  /** Plain text (concatenation of all segments when segments are present) */
   text: z.string(),
-  /** Foreground color in #RRGGBB format */
+  /** Default foreground color in #RRGGBB format */
   color: z.string().optional(),
   estimatedWidthPx: z.number(),
+  /**
+   * Ordered colored text segments for multi-color rendering.
+   * Present only when the push payload contained per-segment colors.
+   * Each segment carries its own text slice and optional color override.
+   */
+  segments: z
+    .array(z.object({ text: z.string(), color: z.string().optional() }))
+    .optional(),
 });
 
 export const BitmapCandidateSchema = z.object({

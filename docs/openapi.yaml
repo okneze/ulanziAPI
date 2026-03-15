@@ -188,6 +188,19 @@ components:
       description: 6-digit hex color in #RRGGBB format
       example: "#FF8800"
 
+    TextSegment:
+      type: object
+      required: [text]
+      description: >
+        A single colored run of text within a multi-color text candidate.
+        When `color` is omitted the device inherits the candidate's top-level color.
+      properties:
+        text:
+          type: string
+          example: "A"
+        color:
+          $ref: "#/components/schemas/HexColor"
+
     DisplayConfig:
       type: object
       required: [widthPx, heightPx, reservedLeftPx, reservedBottomPx]
@@ -274,7 +287,10 @@ components:
 
     PushTextCandidate:
       type: object
-      required: [id, type, text]
+      required: [id, type]
+      description: >
+        Text candidate. Either `text` or `segments` (or both) must be provided.
+        If only `segments` is given, `text` is auto-joined from the segment texts.
       properties:
         id:
           type: string
@@ -284,7 +300,18 @@ components:
           enum: [text]
         text:
           type: string
+          description: Plain text for the whole candidate. Auto-derived from segments if omitted.
           example: "124→"
+        segments:
+          type: array
+          description: >
+            Ordered list of colored text segments for **multi-color rendering**.
+            Use this when different parts of the text should appear in different colors,
+            e.g. `[{"text":"A","color":"#FF0000"},{"text":"B","color":"#0000FF"}]`.
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/TextSegment"
         color:
           $ref: "#/components/schemas/HexColor"
         estimatedWidthPx:
@@ -399,10 +426,19 @@ components:
           enum: [text]
         text:
           type: string
+          description: Plain text (concatenation of all segments when segments are present)
         color:
           $ref: "#/components/schemas/HexColor"
         estimatedWidthPx:
           type: number
+        segments:
+          type: array
+          description: >
+            Present when the push payload included per-segment colors.
+            Each entry renders its own text slice in the specified color.
+            Segments without a `color` inherit the candidate's top-level color.
+          items:
+            $ref: "#/components/schemas/TextSegment"
 
     BitmapCandidate:
       type: object

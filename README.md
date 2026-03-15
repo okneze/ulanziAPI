@@ -174,6 +174,34 @@ curl -X POST http://localhost:3000/v1/content/push \
   }'
 ```
 
+#### With per-segment (multi-color) text
+
+Each segment in `segments` carries its own color. The `text` field can be omitted — it is automatically joined from the segment texts.
+
+```bash
+curl -X POST http://localhost:3000/v1/content/push \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceId": "clock-123",
+    "ttlSec": 60,
+    "candidates": [
+      {
+        "id": "rainbow",
+        "type": "text",
+        "segments": [
+          { "text": "H", "color": "#FF0000" },
+          { "text": "e", "color": "#FF8800" },
+          { "text": "l", "color": "#FFFF00" },
+          { "text": "l", "color": "#00FF00" },
+          { "text": "o", "color": "#0000FF" }
+        ]
+      }
+    ]
+  }'
+```
+
+The device receives a `segments` array alongside the joined `text: "Hello"` and renders each span in its own color.
+
 ---
 
 ### Device polls for content
@@ -253,20 +281,44 @@ Colors are specified as **6-digit hex strings** in `#RRGGBB` format.
 | `#FFFFFF` | White (default) |
 
 Colors can be set on:
-- **Text candidates** — foreground text color
+- **Text candidates** — foreground text color for the whole candidate
 - **Bitmap candidates** — tint color applied to the 1-bit bitmap mask
 - **Fallback** — fallback text color
+- **Individual text segments** — per-span color overrides (see below)
 
 The `color` field is always **optional**. If omitted, the device applies its default color.
 
 ```jsonc
-// Text with color
+// Text with a single color (whole candidate)
 { "id": "bg", "type": "text", "text": "124→", "color": "#00FF00" }
 
 // Bitmap with tint color
 { "id": "icon", "type": "bitmap", "widthPx": 8, "heightPx": 6,
   "frames": ["3C4242423C00"], "color": "#FF0000" }
 ```
+
+### Per-segment (multi-color) text
+
+To display **different parts of a text in different colors**, use the `segments` array instead of (or alongside) the `text` field. Each segment specifies its own text slice and an optional color.
+
+```jsonc
+{
+  "id": "colored_text",
+  "type": "text",
+  // "text" is optional — auto-joined from segments if omitted
+  "segments": [
+    { "text": "H", "color": "#FF0000" },   // red "H"
+    { "text": "e", "color": "#FF8800" },   // orange "e"
+    { "text": "llo", "color": "#FFFF00" }  // yellow "llo"
+  ]
+}
+```
+
+Rules:
+- Either `text` **or** `segments` must be provided (both are accepted simultaneously).
+- When `text` is omitted, it is auto-derived by joining all segment texts (`"Hello"` in the example above).
+- A segment without a `color` **inherits** the candidate's top-level `color`. If neither is set, the device uses its default.
+- `segments` are forwarded unchanged to the device response — the API does not render them.
 
 ---
 
