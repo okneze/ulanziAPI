@@ -1,0 +1,307 @@
+openapi: "3.0.0"
+info:
+  title: Ulanzi LED Display API
+  description: >
+    External API that provides content for LED displays.
+    Supports Nightscout-Clock OneDigit and OneDigit Dual Views.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: system
+    description: System endpoints
+  - name: content
+    description: Watchface content endpoints
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/watchface/content:
+    post:
+      tags: [content]
+      summary: Get display content for a watchface view
+      parameters:
+        - name: debug
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Include debug info in response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentRequest"
+            example:
+              deviceId: clock-123
+              view: onedigit
+              display:
+                widthPx: 32
+                heightPx: 8
+                reservedLeftPx: 5
+                reservedBottomPx: 2
+              locale: de-DE
+              time: "2026-03-15T10:30:00+01:00"
+              context:
+                bgValue: 124
+                trend: flat
+              clientCapabilities:
+                canScroll: true
+                canAnimate: true
+                supportsBitmap: true
+                maxFps: 10
+      responses:
+        "200":
+          description: Content response with render candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: ulanzi-api
+        version:
+          type: string
+          example: "1.0.0"
+
+    DisplayConfig:
+      type: object
+      required: [widthPx, heightPx, reservedLeftPx, reservedBottomPx]
+      properties:
+        widthPx:
+          type: integer
+          minimum: 1
+          example: 32
+        heightPx:
+          type: integer
+          minimum: 1
+          example: 8
+        reservedLeftPx:
+          type: integer
+          minimum: 0
+          example: 5
+        reservedBottomPx:
+          type: integer
+          minimum: 0
+          example: 2
+
+    Context:
+      type: object
+      properties:
+        bgValue:
+          type: number
+          example: 124
+        trend:
+          type: string
+          enum: [rising_fast, rising, flat, falling, falling_fast, unknown]
+          example: flat
+        basalRate:
+          type: number
+          example: 1.2
+        iob:
+          type: number
+          example: 0.5
+        cob:
+          type: number
+          example: 30
+
+    ClientCapabilities:
+      type: object
+      properties:
+        canScroll:
+          type: boolean
+          example: true
+        canAnimate:
+          type: boolean
+          example: true
+        supportsBitmap:
+          type: boolean
+          example: true
+        maxFps:
+          type: integer
+          example: 10
+
+    ContentRequest:
+      type: object
+      required: [deviceId, view, display]
+      properties:
+        deviceId:
+          type: string
+          example: clock-123
+        view:
+          type: string
+          enum: [onedigit, onedigit_dual]
+          example: onedigit
+        display:
+          $ref: "#/components/schemas/DisplayConfig"
+        locale:
+          type: string
+          example: de-DE
+        time:
+          type: string
+          format: date-time
+          example: "2026-03-15T10:30:00+01:00"
+        context:
+          $ref: "#/components/schemas/Context"
+        clientCapabilities:
+          $ref: "#/components/schemas/ClientCapabilities"
+        debug:
+          type: boolean
+
+    ScrollConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        speedPxPerSec:
+          type: number
+        pauseMs:
+          type: number
+        loop:
+          type: number
+
+    RenderPlan:
+      type: object
+      properties:
+        strategy:
+          type: string
+          example: best_fit_then_scroll
+        scroll:
+          $ref: "#/components/schemas/ScrollConfig"
+        align:
+          type: string
+          enum: [left, center, right]
+
+    TextCandidate:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+        estimatedWidthPx:
+          type: number
+
+    BitmapCandidate:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [bitmap]
+        widthPx:
+          type: number
+        heightPx:
+          type: number
+        frames:
+          type: array
+          items:
+            type: string
+
+    DebugInfo:
+      type: object
+      properties:
+        availableWidthPx:
+          type: number
+        availableHeightPx:
+          type: number
+        notes:
+          type: array
+          items:
+            type: string
+
+    ContentResponse:
+      type: object
+      required:
+        [schemaVersion, contentId, validForSec, priority, renderPlan, candidates, fallback]
+      properties:
+        schemaVersion:
+          type: integer
+          example: 1
+        contentId:
+          type: string
+          format: uuid
+        validForSec:
+          type: number
+          example: 60
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        renderPlan:
+          $ref: "#/components/schemas/RenderPlan"
+        candidates:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/TextCandidate"
+              - $ref: "#/components/schemas/BitmapCandidate"
+        fallback:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [text]
+            text:
+              type: string
+        debug:
+          $ref: "#/components/schemas/DebugInfo"
+
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
