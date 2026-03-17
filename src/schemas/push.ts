@@ -93,6 +93,8 @@ export const PushContentRequestSchema = z
         color: HexColorSchema.optional(),
       })
       .optional(),
+    /** Text alignment for rendering. Defaults to "left" when omitted. */
+    align: z.enum(['left', 'center', 'right']).optional(),
   })
   .transform(({ ttlSec, validForSec, ...rest }) => ({
     ...rest,

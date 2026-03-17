@@ -232,6 +232,7 @@ export function planFromStored(
     textWidths.length > 0 && textWidths.some((w) => w > availableWidthPx);
 
   const renderPlan = buildRenderPlan(scrollNeeded, canScroll, availableWidthPx);
+  renderPlan.align = stored.align ?? 'left';
 
   // Remaining TTL (seconds) — used to decide how long the device should wait
   // before polling again.  Capped at 60 s so the device polls at most once per

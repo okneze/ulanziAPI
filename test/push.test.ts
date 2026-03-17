@@ -738,4 +738,59 @@ describe('POST /v1/content/push', () => {
       expect(expiresIn).toBeLessThanOrEqual(120_000);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // align field
+  // -------------------------------------------------------------------------
+
+  it('push with align "right" → poll response has renderPlan.align === "right"', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: { ...PUSH_BASE, align: 'right' },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().renderPlan.align).toBe('right');
+  });
+
+  it('push with align "center" → poll response has renderPlan.align === "center"', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: { ...PUSH_BASE, align: 'center' },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().renderPlan.align).toBe('center');
+  });
+
+  it('push without align → poll response has renderPlan.align === "left" (default)', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/v1/content/push',
+      payload: PUSH_BASE,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/watchface/content',
+      payload: POLL_REQUEST,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().renderPlan.align).toBe('left');
+  });
 });

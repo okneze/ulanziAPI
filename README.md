@@ -155,6 +155,7 @@ Response (`201 Created`):
 | `deviceId` | string | ✅ | Max 128 chars. Identifies the target device. |
 | `ttlSec` | integer | — | Default `60`, max `3600`. Content is discarded after this period. Alias: `validForSec` is also accepted (mirrors the response field name). `ttlSec` takes precedence when both are supplied. |
 | `priority` | string | — | `low` / `normal` / `high` / `critical`. Default `normal`. |
+| `align` | string | — | `left` / `center` / `right`. Default `left`. Text alignment passed through to `renderPlan.align` in the poll response. |
 | `candidates` | array | ✅ | Min 1, max 10. Text and/or bitmap entries, richest first. |
 | `fallback` | object | — | Shown if no candidate fits. Defaults to `{ "type": "text", "text": "" }` when omitted. |
 

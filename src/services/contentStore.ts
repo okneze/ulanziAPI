@@ -8,6 +8,8 @@ export interface StoredEntry {
   fallback: { type: 'text'; text: string; color?: string };
   /** Unix timestamp (ms) when this entry expires */
   expiresAt: number;
+  /** Text alignment hint from the push payload */
+  align?: 'left' | 'center' | 'right';
 }
 
 export class ContentStore {
@@ -24,6 +26,7 @@ export class ContentStore {
       candidates: req.candidates,
       fallback: req.fallback ?? { type: 'text', text: '' },
       expiresAt,
+      align: req.align,
     });
     return new Date(expiresAt);
   }
