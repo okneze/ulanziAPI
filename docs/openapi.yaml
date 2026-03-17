@@ -1,0 +1,526 @@
+openapi: "3.0.0"
+info:
+  title: Ulanzi LED Display API
+  description: >
+    External API that provides content for LED displays.
+    Supports Nightscout-Clock OneDigit and OneDigit Dual Views.
+
+    ## Architecture
+
+    Content flows in two directions:
+
+    1. **External service → API** (`POST /v1/content/push`): A service (e.g. Nightscout
+       bridge, Home Assistant) pushes text/graphics with optional colors for a specific
+       device. The API caches it with a TTL.
+
+    2. **Device → API** (`POST /v1/watchface/content`): The display device polls for
+       content. The API returns the cached content if available, or auto-generates it
+       from the `context` field as a fallback.
+
+    ## Color format
+
+    Colors are specified as 6-digit hex strings: `#RRGGBB`.
+    Examples: `#FF0000` (red), `#00FF00` (green), `#FFFFFF` (white).
+    The device uses this color to render the text or tint the bitmap on the LED matrix.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: system
+    description: System endpoints
+  - name: content
+    description: Watchface content endpoints
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/content/push:
+    post:
+      tags: [content]
+      summary: Push content for a device (called by an external service)
+      description: >
+        An external service (e.g. Nightscout, Home Assistant) pushes content for a
+        specific device. The content is stored in-memory for `ttlSec` seconds.
+        When the device next polls `POST /v1/watchface/content`, it receives this
+        cached content instead of auto-generated output.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushContentRequest"
+            example:
+              deviceId: clock-123
+              ttlSec: 60
+              priority: normal
+              candidates:
+                - id: full_text
+                  type: text
+                  text: "124→"
+                  color: "#00FF00"
+                - id: short_text
+                  type: text
+                  text: "124"
+                  color: "#00FF00"
+                  estimatedWidthPx: 13
+              fallback:
+                type: text
+                text: "--"
+      responses:
+        "201":
+          description: Content stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushContentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/watchface/content:
+    post:
+      tags: [content]
+      summary: Get display content for a watchface view (called by the device)
+      description: >
+        The display device sends its capabilities and context, and receives a list
+        of rendering candidates. If an external service has previously pushed content
+        for this deviceId via `POST /v1/content/push`, that content is returned
+        (with the renderPlan adapted to the device's display dimensions). Otherwise,
+        content is auto-generated from the `context` field.
+      parameters:
+        - name: debug
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Include debug info in response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentRequest"
+            example:
+              deviceId: clock-123
+              view: onedigit
+              display:
+                widthPx: 32
+                heightPx: 8
+                reservedLeftPx: 5
+                reservedBottomPx: 2
+              locale: de-DE
+              time: "2026-03-15T10:30:00+01:00"
+              context:
+                bgValue: 124
+                trend: flat
+              clientCapabilities:
+                canScroll: true
+                canAnimate: true
+                supportsBitmap: true
+                maxFps: 10
+      responses:
+        "200":
+          description: Content response with render candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: ulanzi-api
+        version:
+          type: string
+          example: "1.0.0"
+
+    HexColor:
+      type: string
+      pattern: "^#[0-9A-Fa-f]{6}$"
+      description: 6-digit hex color in #RRGGBB format
+      example: "#FF8800"
+
+    TextSegment:
+      type: object
+      required: [text]
+      description: >
+        A single colored run of text within a multi-color text candidate.
+        When `color` is omitted the device inherits the candidate's top-level color.
+      properties:
+        text:
+          type: string
+          example: "A"
+        color:
+          $ref: "#/components/schemas/HexColor"
+
+    DisplayConfig:
+      type: object
+      required: [widthPx, heightPx, reservedLeftPx, reservedBottomPx]
+      properties:
+        widthPx:
+          type: integer
+          minimum: 1
+          example: 32
+        heightPx:
+          type: integer
+          minimum: 1
+          example: 8
+        reservedLeftPx:
+          type: integer
+          minimum: 0
+          example: 5
+        reservedBottomPx:
+          type: integer
+          minimum: 0
+          example: 2
+
+    Context:
+      type: object
+      properties:
+        bgValue:
+          type: number
+          example: 124
+        trend:
+          type: string
+          enum: [rising_fast, rising, flat, falling, falling_fast, unknown]
+          example: flat
+        basalRate:
+          type: number
+          example: 1.2
+        iob:
+          type: number
+          example: 0.5
+        cob:
+          type: number
+          example: 30
+
+    ClientCapabilities:
+      type: object
+      properties:
+        canScroll:
+          type: boolean
+          example: true
+        canAnimate:
+          type: boolean
+          example: true
+        supportsBitmap:
+          type: boolean
+          example: true
+        maxFps:
+          type: integer
+          example: 10
+
+    ContentRequest:
+      type: object
+      required: [deviceId, view, display]
+      properties:
+        deviceId:
+          type: string
+          example: clock-123
+        view:
+          type: string
+          enum: [onedigit, onedigit_dual]
+          example: onedigit
+        display:
+          $ref: "#/components/schemas/DisplayConfig"
+        locale:
+          type: string
+          example: de-DE
+        time:
+          type: string
+          format: date-time
+          example: "2026-03-15T10:30:00+01:00"
+        context:
+          $ref: "#/components/schemas/Context"
+        clientCapabilities:
+          $ref: "#/components/schemas/ClientCapabilities"
+        debug:
+          type: boolean
+
+    PushTextCandidate:
+      type: object
+      required: [id, type]
+      description: >
+        Text candidate. Either `text` or `segments` (or both) must be provided.
+        If only `segments` is given, `text` is auto-joined from the segment texts.
+      properties:
+        id:
+          type: string
+          example: full_text
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+          description: Plain text for the whole candidate. Auto-derived from segments if omitted.
+          example: "124→"
+        segments:
+          type: array
+          description: >
+            Ordered list of colored text segments for **multi-color rendering**.
+            Use this when different parts of the text should appear in different colors,
+            e.g. `[{"text":"A","color":"#FF0000"},{"text":"B","color":"#0000FF"}]`.
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/TextSegment"
+        color:
+          $ref: "#/components/schemas/HexColor"
+        estimatedWidthPx:
+          type: integer
+          description: Auto-calculated from text length if omitted
+          example: 20
+
+    PushBitmapCandidate:
+      type: object
+      required: [id, type, widthPx, heightPx, frames]
+      properties:
+        id:
+          type: string
+          example: icon
+        type:
+          type: string
+          enum: [bitmap]
+        widthPx:
+          type: integer
+          example: 8
+        heightPx:
+          type: integer
+          example: 6
+        frames:
+          type: array
+          items:
+            type: string
+          example: ["3C4242423C00"]
+        color:
+          $ref: "#/components/schemas/HexColor"
+
+    PushContentRequest:
+      type: object
+      required: [deviceId, candidates]
+      properties:
+        deviceId:
+          type: string
+          example: clock-123
+        ttlSec:
+          type: integer
+          default: 60
+          maximum: 3600
+          description: Time-to-live in seconds. Content is discarded after this period.
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+          default: normal
+        candidates:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/PushTextCandidate"
+              - $ref: "#/components/schemas/PushBitmapCandidate"
+        fallback:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [text]
+            text:
+              type: string
+            color:
+              $ref: "#/components/schemas/HexColor"
+
+    PushContentResponse:
+      type: object
+      properties:
+        stored:
+          type: boolean
+          example: true
+        deviceId:
+          type: string
+          example: clock-123
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the cached content will expire
+
+    ScrollConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        speedPxPerSec:
+          type: number
+        pauseMs:
+          type: number
+        loop:
+          type: number
+
+    RenderPlan:
+      type: object
+      properties:
+        strategy:
+          type: string
+          example: best_fit_then_scroll
+        scroll:
+          $ref: "#/components/schemas/ScrollConfig"
+        align:
+          type: string
+          enum: [left, center, right]
+
+    TextCandidate:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+          description: Plain text (concatenation of all segments when segments are present)
+        color:
+          $ref: "#/components/schemas/HexColor"
+        estimatedWidthPx:
+          type: number
+        segments:
+          type: array
+          description: >
+            Present when the push payload included per-segment colors.
+            Each entry renders its own text slice in the specified color.
+            Segments without a `color` inherit the candidate's top-level color.
+          items:
+            $ref: "#/components/schemas/TextSegment"
+
+    BitmapCandidate:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [bitmap]
+        widthPx:
+          type: number
+        heightPx:
+          type: number
+        frames:
+          type: array
+          items:
+            type: string
+        color:
+          $ref: "#/components/schemas/HexColor"
+
+    DebugInfo:
+      type: object
+      properties:
+        availableWidthPx:
+          type: number
+        availableHeightPx:
+          type: number
+        notes:
+          type: array
+          items:
+            type: string
+
+    ContentResponse:
+      type: object
+      required:
+        [schemaVersion, contentId, validForSec, priority, renderPlan, candidates, fallback]
+      properties:
+        schemaVersion:
+          type: integer
+          example: 1
+        contentId:
+          type: string
+          format: uuid
+        validForSec:
+          type: number
+          description: Remaining TTL in seconds (reflects cache expiry for pushed content)
+          example: 60
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        renderPlan:
+          $ref: "#/components/schemas/RenderPlan"
+        candidates:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/TextCandidate"
+              - $ref: "#/components/schemas/BitmapCandidate"
+        fallback:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [text]
+            text:
+              type: string
+            color:
+              $ref: "#/components/schemas/HexColor"
+        debug:
+          $ref: "#/components/schemas/DebugInfo"
+
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+

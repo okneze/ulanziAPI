@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+.nyc_output
+test
+*.test.ts
+vitest.config.ts
+.git
+.gitignore
+README.md
+docs
