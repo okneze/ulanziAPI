@@ -132,12 +132,12 @@ curl -X POST http://localhost:3000/v1/content/push \
     ],
     "fallback": {
       "type": "text",
-      "text": "--"
+      "text": ""
     }
   }'
 ```
 
-> **Note:** `fallback` is optional. When omitted the API defaults to `{ "type": "text", "text": "--" }`.
+> **Note:** `fallback` is optional. When omitted the API defaults to `{ "type": "text", "text": "" }`.
 
 Response (`201 Created`):
 ```json
@@ -153,10 +153,10 @@ Response (`201 Created`):
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `deviceId` | string | ✅ | Max 128 chars. Identifies the target device. |
-| `ttlSec` | integer | — | Default `60`, max `3600`. Content is discarded after this period. |
+| `ttlSec` | integer | — | Default `60`, max `3600`. Content is discarded after this period. Alias: `validForSec` is also accepted (mirrors the response field name). `ttlSec` takes precedence when both are supplied. |
 | `priority` | string | — | `low` / `normal` / `high` / `critical`. Default `normal`. |
 | `candidates` | array | ✅ | Min 1, max 10. Text and/or bitmap entries, richest first. |
-| `fallback` | object | — | Shown if no candidate fits. Defaults to `{ "type": "text", "text": "--" }`. |
+| `fallback` | object | — | Shown if no candidate fits. Defaults to `{ "type": "text", "text": "" }` when omitted. |
 
 **Text candidate fields:**
 
@@ -306,13 +306,13 @@ When no pushed content is cached for the device, the API auto-generates from `co
     { "id": "short_text", "type": "text", "text": "124",  "estimatedWidthPx": 15 },
     { "id": "icon", "type": "bitmap", "widthPx": 8, "heightPx": 6, "frames": ["3C4242423C00"] }
   ],
-  "fallback": { "type": "text", "text": "--" }
+  "fallback": { "type": "text", "text": "" }
 }
 ```
 
 #### Pushed-content response
 
-When pushed content is available, the same shape is returned but `validForSec` reflects the **remaining cache TTL** and the candidates come from the push payload. Colors and segments are forwarded unchanged:
+When pushed content is available, the same shape is returned but `validForSec` is capped at `60` (so the device keeps polling every minute) and the candidates come from the push payload. Colors and segments are forwarded unchanged:
 
 ```json
 {
@@ -334,7 +334,7 @@ When pushed content is available, the same shape is returned but `validForSec` r
       "estimatedWidthPx": 25
     }
   ],
-  "fallback": { "type": "text", "text": "--" }
+  "fallback": { "type": "text", "text": "" }
 }
 ```
 
@@ -344,7 +344,7 @@ When pushed content is available, the same shape is returned but `validForSec` r
 |---|---|---|
 | `schemaVersion` | `1` | Always `1`. Used by the device to detect breaking changes. |
 | `contentId` | string | UUID. A unique ID for this specific response. |
-| `validForSec` | integer | How long the device should cache this response before polling again. For pushed content this is the remaining TTL; for auto-generated content it is `60`. |
+| `validForSec` | integer | How long the device should wait before polling again. Always `≤ 60` (capped so the device keeps polling every minute). The server-side `expiresAt` is the sole source of truth for cache lifetime. |
 | `priority` | string | `low` / `normal` / `high` / `critical`. |
 | `renderPlan` | object | Rendering hints — `strategy`, `scroll` config, and `align`. |
 | `renderPlan.scroll.enabled` | boolean | `true` when the widest text candidate exceeds `availableWidthPx` and `canScroll` is `true`. |
@@ -564,7 +564,7 @@ The device makes the final decision.
 
 ### TTL / `validForSec`
 
-For pushed content, `validForSec` in the response reflects the **remaining cache TTL** — telling the device how long it can use this response before polling again.
+`validForSec` in the poll response is always **`≤ 60`** — it tells the device when to poll again, not how long the pushed content remains valid. The server-side `expiresAt` (returned by `POST /v1/content/push`) is the sole source of truth for cache lifetime. Pushed content continues to be served on every poll until `now >= expiresAt`, regardless of the `validForSec` hint.
 
 ---
 
