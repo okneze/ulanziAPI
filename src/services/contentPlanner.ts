@@ -233,11 +233,14 @@ export function planFromStored(
 
   const renderPlan = buildRenderPlan(scrollNeeded, canScroll, availableWidthPx);
 
-  // Remaining TTL (seconds) so the device knows how long to cache the response
+  // Remaining TTL (seconds) — used to decide how long the device should wait
+  // before polling again.  Capped at 60 s so the device polls at most once per
+  // minute, keeping the cache independent of the response hint.
   const remainingTtlSec = Math.max(
     0,
     Math.floor((stored.expiresAt - Date.now()) / 1000)
   );
+  const validForSec = Math.min(60, remainingTtlSec);
 
   const debugInfo =
     includeDebug || config.debugEnabled
@@ -251,7 +254,7 @@ export function planFromStored(
   return {
     schemaVersion: 1,
     contentId: uuidv4(),
-    validForSec: remainingTtlSec,
+    validForSec,
     priority: stored.priority,
     renderPlan,
     candidates,

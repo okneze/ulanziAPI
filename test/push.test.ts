@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { contentStore } from '../src/services/contentStore.js';
 import type { FastifyInstance } from 'fastify';
@@ -174,11 +174,11 @@ describe('POST /v1/content/push', () => {
     expect(candidate.estimatedWidthPx).toBe(99);
   });
 
-  it('validForSec reflects remaining TTL from push', async () => {
+  it('validForSec in poll response is capped at 60 regardless of push TTL', async () => {
     await app.inject({
       method: 'POST',
       url: '/v1/content/push',
-      payload: { ...PUSH_BASE, ttlSec: 120 },
+      payload: { ...PUSH_BASE, ttlSec: 300 },
     });
 
     const response = await app.inject({
@@ -188,9 +188,9 @@ describe('POST /v1/content/push', () => {
     });
 
     const body = response.json();
-    // Should be close to 120 (allow a few seconds of test execution time)
-    expect(body.validForSec).toBeGreaterThanOrEqual(118);
-    expect(body.validForSec).toBeLessThanOrEqual(120);
+    // validForSec should be capped at 60, regardless of the 300s push TTL
+    expect(body.validForSec).toBeGreaterThanOrEqual(58);
+    expect(body.validForSec).toBeLessThanOrEqual(60);
   });
 
   it('device falls back to auto-generated content when no pushed content', async () => {
@@ -569,5 +569,173 @@ describe('POST /v1/content/push', () => {
     });
 
     expect(response.statusCode).toBe(400);
+  });
+
+  // -------------------------------------------------------------------------
+  // TTL / cache-lifetime tests (use fake timers to simulate time passage)
+  // -------------------------------------------------------------------------
+
+  describe('TTL persistence (validForSec alias + time simulation)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      contentStore.clear();
+    });
+
+    it('accepts validForSec as alias for ttlSec in the push request', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/content/push',
+        payload: {
+          // intentionally omit ttlSec so validForSec is the only TTL hint
+          deviceId: 'ttl-alias-test',
+          validForSec: 300,
+          priority: 'normal',
+          candidates: PUSH_BASE.candidates,
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      const body = response.json();
+      expect(body.stored).toBe(true);
+      // expiresAt must be ~300 s in the future, not 60 s (the default)
+      const expiresIn = new Date(body.expiresAt).getTime() - Date.now();
+      expect(expiresIn).toBeGreaterThan(270_000); // at least 270 s
+      expect(expiresIn).toBeLessThanOrEqual(300_000);
+    });
+
+    it('pushed content is still returned after 70 s within a 300 s TTL', async () => {
+      // Only fake the Date object — leave real setTimeout so Fastify keeps working
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const t0 = Date.now();
+      vi.setSystemTime(t0);
+
+      await app.inject({
+        method: 'POST',
+        url: '/v1/content/push',
+        payload: {
+          deviceId: 'ttl-70s-test',
+          validForSec: 300,
+          priority: 'normal',
+          candidates: PUSH_BASE.candidates,
+        },
+      });
+
+      // T+0: pushed content should be served
+      let res = await app.inject({
+        method: 'POST',
+        url: '/v1/watchface/content',
+        payload: { ...POLL_REQUEST, deviceId: 'ttl-70s-test' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(
+        res.json().candidates.some((c: { text?: string }) => c.text === 'Hello LED')
+      ).toBe(true);
+
+      // T+70 s: still within the 300 s TTL
+      vi.setSystemTime(t0 + 70_000);
+      res = await app.inject({
+        method: 'POST',
+        url: '/v1/watchface/content',
+        payload: { ...POLL_REQUEST, deviceId: 'ttl-70s-test' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(
+        res.json().candidates.some((c: { text?: string }) => c.text === 'Hello LED')
+      ).toBe(true);
+    });
+
+    it('pushed content expires after the full TTL and falls back to auto-generated content', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const t0 = Date.now();
+      vi.setSystemTime(t0);
+
+      await app.inject({
+        method: 'POST',
+        url: '/v1/content/push',
+        payload: {
+          deviceId: 'ttl-expire-test',
+          validForSec: 300,
+          priority: 'normal',
+          candidates: PUSH_BASE.candidates,
+        },
+      });
+
+      // T+301 s: TTL has expired
+      vi.setSystemTime(t0 + 301_000);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/watchface/content',
+        payload: {
+          ...POLL_REQUEST,
+          deviceId: 'ttl-expire-test',
+          context: { bgValue: 124, trend: 'flat' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // No pushed content — should be auto-generated from context
+      expect(
+        res.json().candidates.every((c: { text?: string }) => c.text !== 'Hello LED')
+      ).toBe(true);
+      expect(
+        res.json().candidates.some(
+          (c: { type: string; text?: string }) =>
+            c.type === 'text' && c.text?.includes('124')
+        )
+      ).toBe(true);
+    });
+
+    it('multiple polls within the TTL do not evict the push cache', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const t0 = Date.now();
+      vi.setSystemTime(t0);
+
+      await app.inject({
+        method: 'POST',
+        url: '/v1/content/push',
+        payload: {
+          deviceId: 'ttl-multi-read-test',
+          validForSec: 300,
+          priority: 'normal',
+          candidates: PUSH_BASE.candidates,
+        },
+      });
+
+      const pollPayload = { ...POLL_REQUEST, deviceId: 'ttl-multi-read-test' };
+
+      for (const offsetSec of [0, 30, 60, 90, 120, 180]) {
+        vi.setSystemTime(t0 + offsetSec * 1000);
+        const res = await app.inject({
+          method: 'POST',
+          url: '/v1/watchface/content',
+          payload: pollPayload,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(
+          res.json().candidates.some((c: { text?: string }) => c.text === 'Hello LED'),
+          `poll at T+${offsetSec}s should still serve cached content`
+        ).toBe(true);
+      }
+    });
+
+    it('ttlSec takes precedence when both ttlSec and validForSec are supplied', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/content/push',
+        payload: {
+          deviceId: 'ttl-precedence-test',
+          ttlSec: 120,
+          validForSec: 300, // should be ignored in favour of ttlSec
+          priority: 'normal',
+          candidates: PUSH_BASE.candidates,
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      const expiresIn = new Date(response.json().expiresAt).getTime() - Date.now();
+      // Should be ~120 s, not ~300 s
+      expect(expiresIn).toBeGreaterThan(110_000);
+      expect(expiresIn).toBeLessThanOrEqual(120_000);
+    });
   });
 });

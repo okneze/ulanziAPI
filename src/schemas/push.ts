@@ -63,28 +63,42 @@ export const PushCandidateSchema = z.union([
   PushBitmapCandidateSchema,
 ]);
 
-export const PushContentRequestSchema = z.object({
-  /** Target device identifier */
-  deviceId: z.string().min(1).max(128),
-  /** How long (seconds) this content should be served before expiry. Max 1 hour. */
-  ttlSec: z.number().int().positive().max(3600).default(60),
-  /** Optional priority override; defaults to "normal" */
-  priority: PrioritySchema.optional(),
-  /**
-   * Ordered list of display candidates.
-   * Provide them from richest/widest to narrowest so the device can pick the
-   * best fit for its available area.
-   */
-  candidates: z.array(PushCandidateSchema).min(1).max(10),
-  /** Shown if no candidate fits */
-  fallback: z
-    .object({
-      type: z.literal('text'),
-      text: z.string().min(1).max(64),
-      color: HexColorSchema.optional(),
-    })
-    .optional(),
-});
+export const PushContentRequestSchema = z
+  .object({
+    /** Target device identifier */
+    deviceId: z.string().min(1).max(128),
+    /**
+     * How long (seconds) this content should be served before expiry. Max 1 hour.
+     * Use `ttlSec` or the alias `validForSec` — whichever you find more readable.
+     */
+    ttlSec: z.number().int().positive().max(3600).optional(),
+    /**
+     * Alias for `ttlSec`. Accepted for consistency with the poll-response field
+     * of the same name. `ttlSec` takes precedence when both are supplied.
+     */
+    validForSec: z.number().int().positive().max(3600).optional(),
+    /** Optional priority override; defaults to "normal" */
+    priority: PrioritySchema.optional(),
+    /**
+     * Ordered list of display candidates.
+     * Provide them from richest/widest to narrowest so the device can pick the
+     * best fit for its available area.
+     */
+    candidates: z.array(PushCandidateSchema).min(1).max(10),
+    /** Shown if no candidate fits */
+    fallback: z
+      .object({
+        type: z.literal('text'),
+        text: z.string().min(1).max(64),
+        color: HexColorSchema.optional(),
+      })
+      .optional(),
+  })
+  .transform(({ ttlSec, validForSec, ...rest }) => ({
+    ...rest,
+    /** Resolved TTL: ttlSec takes precedence; falls back to validForSec alias, then to 60s default. */
+    ttlSec: ttlSec ?? validForSec ?? 60,
+  }));
 
 export const PushContentResponseSchema = z.object({
   stored: z.literal(true),
