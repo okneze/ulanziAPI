@@ -22,7 +22,7 @@ export class ContentStore {
       deviceId: req.deviceId,
       priority: req.priority ?? 'normal',
       candidates: req.candidates,
-      fallback: req.fallback ?? { type: 'text', text: '--' },
+      fallback: req.fallback ?? { type: 'text', text: '' },
       expiresAt,
     });
     return new Date(expiresAt);

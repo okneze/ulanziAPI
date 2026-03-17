@@ -52,8 +52,8 @@ function buildBgCandidates(
   const bg = ctx.bgValue;
   const arrow = trendArrow(ctx.trend);
 
-  const fullText = bg !== undefined ? `${bg}${arrow}` : arrow || '--';
-  const shortText = bg !== undefined ? `${bg}` : '--';
+  const fullText = bg !== undefined ? `${bg}${arrow}` : arrow;
+  const shortText = bg !== undefined ? `${bg}` : '';
 
   const candidates: Candidate[] = [];
   let scrollNeeded = false;
@@ -148,8 +148,8 @@ export function planContent(
           {
             id: 'full_text',
             type: 'text' as const,
-            text: '--',
-            estimatedWidthPx: estimateTextWidth('--'),
+            text: '',
+            estimatedWidthPx: 0,
           } satisfies TextCandidate,
         ],
         scrollNeeded: false,
@@ -172,7 +172,7 @@ export function planContent(
     priority,
     renderPlan,
     candidates,
-    fallback: { type: 'text', text: '--' },
+    fallback: { type: 'text', text: '' },
     debug: debugInfo,
   };
 }
